@@ -29,7 +29,7 @@ extern void (*JET_MUTABLE invalid_conf_abort)(void);
 #define opt_xmalloc 0
 #define opt_experimental_infallible_new 0
 #define opt_experimental_tcache_gc 0
-#define opt_zero 0
+extern bool opt_zero;
 extern unsigned opt_narenas;
 #ifdef JEMALLOC_ZERO_REALLOC_DEFAULT_FREE
   #define opt_zero_realloc_action zero_realloc_action_free
