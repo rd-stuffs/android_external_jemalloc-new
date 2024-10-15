@@ -17,7 +17,7 @@
 #include <sys/bitops.h>	/* ilog2 */
 #endif
 #ifdef JEMALLOC_HAVE_VM_MAKE_TAG
-#define PAGES_FD_TAG VM_MAKE_TAG(101U)
+#define PAGES_FD_TAG VM_MAKE_TAG(254U)
 #else
 #define PAGES_FD_TAG -1
 #endif
@@ -603,36 +603,13 @@ os_overcommits_proc(void) {
 	int fd;
 	char buf[1];
 
-#if defined(JEMALLOC_USE_SYSCALL) && defined(SYS_open)
-	#if defined(O_CLOEXEC)
-		fd = (int)syscall(SYS_open, "/proc/sys/vm/overcommit_memory", O_RDONLY |
-			O_CLOEXEC);
-	#else
-		fd = (int)syscall(SYS_open, "/proc/sys/vm/overcommit_memory", O_RDONLY);
-		if (fd != -1) {
-			fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
-		}
-	#endif
-#elif defined(JEMALLOC_USE_SYSCALL) && defined(SYS_openat)
-	#if defined(O_CLOEXEC)
-		fd = (int)syscall(SYS_openat,
-			AT_FDCWD, "/proc/sys/vm/overcommit_memory", O_RDONLY | O_CLOEXEC);
-	#else
-		fd = (int)syscall(SYS_openat,
-			AT_FDCWD, "/proc/sys/vm/overcommit_memory", O_RDONLY);
-		if (fd != -1) {
-			fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
-		}
-	#endif
+#if defined(O_CLOEXEC)
+	fd = malloc_open("/proc/sys/vm/overcommit_memory", O_RDONLY | O_CLOEXEC);
 #else
-	#if defined(O_CLOEXEC)
-		fd = open("/proc/sys/vm/overcommit_memory", O_RDONLY | O_CLOEXEC);
-	#else
-		fd = open("/proc/sys/vm/overcommit_memory", O_RDONLY);
-		if (fd != -1) {
-			fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
-		}
-	#endif
+	fd = malloc_open("/proc/sys/vm/overcommit_memory", O_RDONLY);
+	if (fd != -1) {
+		fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
+	}
 #endif
 
 	if (fd == -1) {
@@ -640,11 +617,7 @@ os_overcommits_proc(void) {
 	}
 
 	ssize_t nread = malloc_read_fd(fd, &buf, sizeof(buf));
-#if defined(JEMALLOC_USE_SYSCALL) && defined(SYS_close)
-	syscall(SYS_close, fd);
-#else
-	close(fd);
-#endif
+	malloc_close(fd);
 
 	if (nread < 1) {
 		return false; /* Error. */

@@ -34,54 +34,6 @@ jobs:
     - os: windows
       arch: amd64
       env: CC=cl.exe CXX=cl.exe CROSS_COMPILE_32BIT=yes CONFIGURE_FLAGS="--enable-debug"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--enable-debug"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--enable-prof --enable-prof-libunwind"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--with-lg-page=16 --with-malloc-conf=tcache:false"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CROSS_COMPILE_32BIT=yes
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--enable-debug --enable-prof --enable-prof-libunwind"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--enable-debug --with-lg-page=16 --with-malloc-conf=tcache:false"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CROSS_COMPILE_32BIT=yes CONFIGURE_FLAGS="--enable-debug"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--enable-prof --enable-prof-libunwind --with-lg-page=16 --with-malloc-conf=tcache:false"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CROSS_COMPILE_32BIT=yes CONFIGURE_FLAGS="--enable-prof --enable-prof-libunwind"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CROSS_COMPILE_32BIT=yes CONFIGURE_FLAGS="--with-lg-page=16 --with-malloc-conf=tcache:false"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--enable-debug --enable-prof --enable-prof-libunwind --with-lg-page=16 --with-malloc-conf=tcache:false"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CROSS_COMPILE_32BIT=yes CONFIGURE_FLAGS="--enable-debug --enable-prof --enable-prof-libunwind"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CROSS_COMPILE_32BIT=yes CONFIGURE_FLAGS="--enable-debug --with-lg-page=16 --with-malloc-conf=tcache:false"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CROSS_COMPILE_32BIT=yes CONFIGURE_FLAGS="--enable-prof --enable-prof-libunwind --with-lg-page=16 --with-malloc-conf=tcache:false"
-    - os: freebsd
-      arch: amd64
-      env: CC=gcc CXX=g++ CROSS_COMPILE_32BIT=yes CONFIGURE_FLAGS="--enable-debug --enable-prof --enable-prof-libunwind --with-lg-page=16 --with-malloc-conf=tcache:false"
     - os: linux
       arch: amd64
       env: CC=gcc CXX=g++ EXTRA_CFLAGS="-Werror -Wno-array-bounds"
@@ -320,37 +272,40 @@ jobs:
       arch: amd64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--with-malloc-conf=percpu_arena:percpu,background_thread:true" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
       env: CC=gcc CXX=g++ EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
+      env: CC=clang CXX=clang++ EXTRA_CFLAGS="-Werror -Wno-array-bounds -Wno-unknown-warning-option -Wno-ignored-attributes"
+    - os: linux
+      arch: arm64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--enable-debug" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--enable-prof" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--disable-stats" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--disable-libdl" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--enable-opt-safety-checks" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--with-lg-page=16" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--with-malloc-conf=tcache:false" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--with-malloc-conf=dss:primary" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--with-malloc-conf=percpu_arena:percpu" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: linux
-      arch: ppc64le
+      arch: arm64
       env: CC=gcc CXX=g++ CONFIGURE_FLAGS="--with-malloc-conf=background_thread:true" EXTRA_CFLAGS="-Werror -Wno-array-bounds"
     - os: osx
       arch: amd64

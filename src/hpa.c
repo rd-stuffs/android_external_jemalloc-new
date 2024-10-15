@@ -12,7 +12,8 @@ static edata_t *hpa_alloc(tsdn_t *tsdn, pai_t *self, size_t size,
     size_t alignment, bool zero, bool guarded, bool frequent_reuse,
     bool *deferred_work_generated);
 static size_t hpa_alloc_batch(tsdn_t *tsdn, pai_t *self, size_t size,
-    size_t nallocs, edata_list_active_t *results, bool *deferred_work_generated);
+    size_t nallocs, edata_list_active_t *results, bool frequent_reuse,
+    bool *deferred_work_generated);
 static bool hpa_expand(tsdn_t *tsdn, pai_t *self, edata_t *edata,
     size_t old_size, size_t new_size, bool zero, bool *deferred_work_generated);
 static bool hpa_shrink(tsdn_t *tsdn, pai_t *self, edata_t *edata,
@@ -508,6 +509,19 @@ hpa_try_hugify(tsdn_t *tsdn, hpa_shard_t *shard) {
 	return true;
 }
 
+static bool
+hpa_min_purge_interval_passed(tsdn_t *tsdn, hpa_shard_t *shard) {
+	malloc_mutex_assert_owner(tsdn, &shard->mtx);
+	if (shard->opts.experimental_strict_min_purge_interval) {
+		uint64_t since_last_purge_ms = shard->central->hooks.ms_since(
+		    &shard->last_purge);
+		if (since_last_purge_ms < shard->opts.min_purge_interval_ms) {
+		     return false;
+		}
+	}
+	return true;
+}
+
 /*
  * Execution of deferred work is forced if it's triggered by an explicit
  * hpa_shard_do_deferred_work() call.
@@ -519,34 +533,63 @@ hpa_shard_maybe_do_deferred_work(tsdn_t *tsdn, hpa_shard_t *shard,
 	if (!forced && shard->opts.deferral_allowed) {
 		return;
 	}
+
 	/*
 	 * If we're on a background thread, do work so long as there's work to
 	 * be done.  Otherwise, bound latency to not be *too* bad by doing at
 	 * most a small fixed number of operations.
 	 */
-	bool hugified = false;
-	bool purged = false;
 	size_t max_ops = (forced ? (size_t)-1 : 16);
 	size_t nops = 0;
-	do {
+
+	/*
+	 * Always purge before hugifying, to make sure we get some
+	 * ability to hit our quiescence targets.
+	 */
+
+	/*
+	 * Make sure we respect purge interval setting and don't purge
+	 * too frequently.
+	 */
+	if (hpa_min_purge_interval_passed(tsdn, shard)) {
+		size_t max_purges = max_ops;
 		/*
-		 * Always purge before hugifying, to make sure we get some
-		 * ability to hit our quiescence targets.
+		 * Limit number of hugepages (slabs) to purge.
+		 * When experimental_max_purge_nhp option is used, there is no
+		 * guarantee we'll always respect dirty_mult option.  Option
+		 * experimental_max_purge_nhp provides a way to configure same
+		 * behaviour as was possible before, with buggy implementation
+		 * of purging algorithm.
 		 */
-		purged = false;
-		while (hpa_should_purge(tsdn, shard) && nops < max_ops) {
-			purged = hpa_try_purge(tsdn, shard);
-			if (purged) {
-				nops++;
-			}
+		ssize_t max_purge_nhp = shard->opts.experimental_max_purge_nhp;
+		if (max_purge_nhp != -1 &&
+		    max_purges > (size_t)max_purge_nhp) {
+			max_purges = max_purge_nhp;
 		}
-		hugified = hpa_try_hugify(tsdn, shard);
-		if (hugified) {
+
+		while (hpa_should_purge(tsdn, shard) && nops < max_purges) {
+			if (!hpa_try_purge(tsdn, shard)) {
+				/*
+				 * It is fine if we couldn't purge as sometimes
+				 * we try to purge just to unblock
+				 * hugification, but there is maybe no dirty
+				 * pages at all at the moment.
+				 */
+				break;
+			}
+			malloc_mutex_assert_owner(tsdn, &shard->mtx);
 			nops++;
 		}
+	}
+
+	/*
+	 * Try to hugify at least once, even if we out of operations to make at
+	 * least some progress on hugification even at worst case.
+	 */
+	while (hpa_try_hugify(tsdn, shard) && nops < max_ops) {
 		malloc_mutex_assert_owner(tsdn, &shard->mtx);
-		malloc_mutex_assert_owner(tsdn, &shard->mtx);
-	} while ((hugified || purged) && nops < max_ops);
+		nops++;
+	}
 }
 
 static edata_t *
@@ -643,7 +686,9 @@ static size_t
 hpa_alloc_batch_psset(tsdn_t *tsdn, hpa_shard_t *shard, size_t size,
     size_t nallocs, edata_list_active_t *results,
     bool *deferred_work_generated) {
-	assert(size <= shard->opts.slab_max_alloc);
+	assert(size <= HUGEPAGE);
+	assert(size <= shard->opts.slab_max_alloc ||
+	    size == sz_index2size(sz_size2index(size)));
 	bool oom = false;
 
 	size_t nsuccess = hpa_try_alloc_batch_no_grow(tsdn, shard, size, &oom,
@@ -712,14 +757,26 @@ hpa_from_pai(pai_t *self) {
 
 static size_t
 hpa_alloc_batch(tsdn_t *tsdn, pai_t *self, size_t size, size_t nallocs,
-    edata_list_active_t *results, bool *deferred_work_generated) {
+    edata_list_active_t *results, bool frequent_reuse,
+    bool *deferred_work_generated) {
 	assert(nallocs > 0);
 	assert((size & PAGE_MASK) == 0);
 	witness_assert_depth_to_rank(tsdn_witness_tsdp_get(tsdn),
 	    WITNESS_RANK_CORE, 0);
 	hpa_shard_t *shard = hpa_from_pai(self);
 
-	if (size > shard->opts.slab_max_alloc) {
+	/*
+	 * frequent_use here indicates this request comes from the arena bins,
+	 * in which case it will be split into slabs, and therefore there is no
+	 * intrinsic slack in the allocation (the entire range of allocated size
+	 * will be accessed).
+	 *
+	 * In this case bypass the slab_max_alloc limit (if still within the
+	 * huge page size).  These requests do not concern internal
+	 * fragmentation with huge pages (again, the full size will be used).
+	 */
+	if (!(frequent_reuse && size <= HUGEPAGE) &&
+	    (size > shard->opts.slab_max_alloc)) {
 		return 0;
 	}
 
@@ -771,7 +828,7 @@ hpa_alloc(tsdn_t *tsdn, pai_t *self, size_t size, size_t alignment, bool zero,
 	edata_list_active_t results;
 	edata_list_active_init(&results);
 	size_t nallocs = hpa_alloc_batch(tsdn, self, size, /* nallocs */ 1,
-	    &results, deferred_work_generated);
+	    &results, frequent_reuse, deferred_work_generated);
 	assert(nallocs == 0 || nallocs == 1);
 	edata_t *edata = edata_list_active_first(&results);
 	return edata;

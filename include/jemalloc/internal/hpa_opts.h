@@ -49,6 +49,19 @@ struct hpa_shard_opts_s {
 	 * Minimum amount of time between purges.
 	 */
 	uint64_t min_purge_interval_ms;
+
+	/*
+	 * Strictly respect minimum amout of time between purges.
+	 *
+	 * This is an option to provide backward compatibility for staged rollout of
+	 * purging logic fix.
+	 */
+	bool experimental_strict_min_purge_interval;
+
+	/*
+	 * Maximum number of hugepages to purge on each purging attempt.
+	 */
+	ssize_t experimental_max_purge_nhp;
 };
 
 #define HPA_SHARD_OPTS_DEFAULT {					\
@@ -69,7 +82,11 @@ struct hpa_shard_opts_s {
 	/* hugify_delay_ms */						\
 	10 * 1000,							\
 	/* min_purge_interval_ms */					\
-	5 * 1000							\
+	5 * 1000,							\
+	/* experimental_strict_min_purge_interval */			\
+	false,								\
+	/* experimental_max_purge_nhp */				\
+	-1								\
 }
 
 #endif /* JEMALLOC_INTERNAL_HPA_OPTS_H */

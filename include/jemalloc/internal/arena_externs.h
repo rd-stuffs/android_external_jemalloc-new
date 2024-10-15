@@ -63,7 +63,8 @@ void arena_do_deferred_work(tsdn_t *tsdn, arena_t *arena);
 void arena_reset(tsd_t *tsd, arena_t *arena);
 void arena_destroy(tsd_t *tsd, arena_t *arena);
 void arena_cache_bin_fill_small(tsdn_t *tsdn, arena_t *arena,
-    cache_bin_t *cache_bin, szind_t binind, const unsigned nfill);
+    cache_bin_t *cache_bin, szind_t binind, const cache_bin_sz_t nfill_min,
+    const cache_bin_sz_t nfill_max);
 
 void *arena_malloc_hard(tsdn_t *tsdn, arena_t *arena, size_t size,
     szind_t ind, bool zero, bool slab);
@@ -103,7 +104,6 @@ void arena_nthreads_inc(arena_t *arena, bool internal);
 void arena_nthreads_dec(arena_t *arena, bool internal);
 arena_t *arena_new(tsdn_t *tsdn, unsigned ind, const arena_config_t *config);
 bool arena_init_huge(arena_t *a0);
-bool arena_is_huge(unsigned arena_ind);
 arena_t *arena_choose_huge(tsd_t *tsd);
 bin_t *arena_bin_choose(tsdn_t *tsdn, arena_t *arena, szind_t binind,
     unsigned *binshard);

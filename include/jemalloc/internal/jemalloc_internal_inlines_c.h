@@ -278,8 +278,6 @@ fastpath_success_finish(tsd_t *tsd, uint64_t allocated_after,
 	if (config_stats) {
 		bin->tstats.nrequests++;
 	}
-
-	LOG("core.malloc.exit", "result: %p", ret);
 }
 
 JEMALLOC_ALWAYS_INLINE bool
@@ -306,7 +304,6 @@ malloc_initialized(void) {
  */
 JEMALLOC_ALWAYS_INLINE void *
 imalloc_fastpath(size_t size, void *(fallback_alloc)(size_t)) {
-	LOG("core.malloc.entry", "size: %zu", size);
 	if (tsd_get_allocates() && unlikely(!malloc_initialized())) {
 		return fallback_alloc(size);
 	}
@@ -499,6 +496,7 @@ bool free_fastpath(void *ptr, size_t size, bool size_hint) {
             *tsd_thread_deallocated_next_event_fastp_get_unsafe(tsd) == 0);
 
         emap_alloc_ctx_t alloc_ctx;
+	size_t usize;
         if (!size_hint) {
                 bool err = emap_alloc_ctx_try_lookup_fast(tsd,
                     &arena_emap_global, ptr, &alloc_ctx);
@@ -510,6 +508,7 @@ bool free_fastpath(void *ptr, size_t size, bool size_hint) {
                         return false;
                 }
                 assert(alloc_ctx.szind != SC_NSIZES);
+		usize = sz_index2size(alloc_ctx.szind);
         } else {
                 /*
                  * Check for both sizes that are too large, and for sampled /
@@ -521,7 +520,7 @@ bool free_fastpath(void *ptr, size_t size, bool size_hint) {
                     /* check_prof */ true))) {
                         return false;
                 }
-                alloc_ctx.szind = sz_size2index_lookup(size);
+		sz_size2index_usize_fastpath(size, &alloc_ctx.szind, &usize);
                 /* Max lookup class must be small. */
                 assert(alloc_ctx.szind < SC_NBINS);
                 /* This is a dead store, except when opt size checking is on. */
@@ -537,7 +536,6 @@ bool free_fastpath(void *ptr, size_t size, bool size_hint) {
         uint64_t deallocated, threshold;
         te_free_fastpath_ctx(tsd, &deallocated, &threshold);
 
-        size_t usize = sz_index2size(alloc_ctx.szind);
         uint64_t deallocated_after = deallocated + usize;
         /*
          * Check for events and tsd non-nominal (fast_threshold will be set to
@@ -578,14 +576,9 @@ bool free_fastpath(void *ptr, size_t size, bool size_hint) {
 
 JEMALLOC_ALWAYS_INLINE void JEMALLOC_NOTHROW
 je_sdallocx_noflags(void *ptr, size_t size) {
-        LOG("core.sdallocx.entry", "ptr: %p, size: %zu, flags: 0", ptr,
-                size);
-
         if (!free_fastpath(ptr, size, true)) {
                 sdallocx_default(ptr, size, 0);
         }
-
-        LOG("core.sdallocx.exit", "");
 }
 
 JEMALLOC_ALWAYS_INLINE void JEMALLOC_NOTHROW

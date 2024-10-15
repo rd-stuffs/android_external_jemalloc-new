@@ -201,8 +201,6 @@ ecache_evict(tsdn_t *tsdn, pac_t *pac, ehooks_t *ehooks,
 	 * concurrent operations.
 	 */
 	switch (ecache->state) {
-	case extent_state_active:
-		not_reached();
 	case extent_state_dirty:
 	case extent_state_muzzy:
 		emap_update_edata_state(tsdn, pac->emap, edata,
@@ -211,6 +209,9 @@ ecache_evict(tsdn_t *tsdn, pac_t *pac, ehooks_t *ehooks,
 	case extent_state_retained:
 		extent_deregister(tsdn, pac, edata);
 		break;
+	case extent_state_active:
+	case extent_state_transition:
+	case extent_state_merging:
 	default:
 		not_reached();
 	}
@@ -824,6 +825,7 @@ extent_try_coalesce_impl(tsdn_t *tsdn, pac_t *pac, ehooks_t *ehooks,
     ecache_t *ecache, edata_t *edata, bool *coalesced) {
 	assert(!edata_guarded_get(edata));
 	assert(coalesced != NULL);
+	*coalesced = false;
 	/*
 	 * We avoid checking / locking inactive neighbors for large size
 	 * classes, since they are eagerly coalesced on deallocation which can

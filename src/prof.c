@@ -34,6 +34,7 @@ bool opt_prof_final = false;
 bool opt_prof_leak = false;
 bool opt_prof_leak_error = false;
 bool opt_prof_accum = false;
+bool opt_prof_pid_namespace = false;
 char opt_prof_prefix[PROF_DUMP_FILENAME_LEN];
 bool opt_prof_sys_thread_name = false;
 bool opt_prof_unbias = true;
@@ -165,7 +166,7 @@ prof_malloc_sample_object(tsd_t *tsd, const void *ptr, size_t size,
 	if (prof_sample_hook != NULL) {
 		prof_bt_t *bt = &tctx->gctx->bt;
 		pre_reentrancy(tsd, NULL);
-		prof_sample_hook(ptr, size, bt->vec, bt->len);
+		prof_sample_hook(ptr, size, bt->vec, bt->len, usize);
 		post_reentrancy(tsd);
 	}
 }
@@ -277,7 +278,8 @@ prof_sample_new_event_wait(tsd_t *tsd) {
 	 * otherwise bytes_until_sample would be 0 if u is exactly 1.0.
 	 */
 	uint64_t r = prng_lg_range_u64(tsd_prng_statep_get(tsd), 53);
-	double u = (r == 0U) ? 1.0 : (double)r * (1.0/9007199254740992.0L);
+	double u = (r == 0U) ? 1.0 : (double)((long double)r *
+	    (1.0L/9007199254740992.0L));
 	return (uint64_t)(log(u) /
 	    log(1.0 - (1.0 / (double)((uint64_t)1U << lg_prof_sample))))
 	    + (uint64_t)1U;

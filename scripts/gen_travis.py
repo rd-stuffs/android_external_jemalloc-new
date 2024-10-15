@@ -246,6 +246,9 @@ def generate_linux(arch):
     if arch == PPC64LE:
         # Avoid 32 bit builds and clang on PowerPC
         exclude = (CROSS_COMPILE_32BIT, CLANG,)
+    if arch == ARM64:
+        # Avoid 32 bit build on ARM64
+        exclude = (CROSS_COMPILE_32BIT,)
 
     return generate_jobs(os, arch, exclude, max_unusual_opts)
 
@@ -309,10 +312,16 @@ def main():
     jobs = '\n'.join((
         generate_windows(AMD64),
 
-        generate_freebsd(AMD64),
+        # Travis currently provides only FreeBSD 12.1 which is EOL.  Builds are
+        # not working as of Jan 2024.  Disable the tests for now to avoid the
+        # noise / confusion.
+
+        # generate_freebsd(AMD64),
 
         generate_linux(AMD64),
-        generate_linux(PPC64LE),
+        # PPC tests on travis has been down for a while, disable it for now.
+        # generate_linux(PPC64LE),
+        generate_linux(ARM64),
 
         generate_macos(AMD64),
 

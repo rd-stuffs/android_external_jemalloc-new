@@ -362,11 +362,8 @@ arena_new_create_background_thread(tsdn_t *tsdn, unsigned ind) {
 	if (ind == 0) {
 		return;
 	}
-	/*
-	 * Avoid creating a new background thread just for the huge arena, which
-	 * purges eagerly by default.
-	 */
-	if (have_background_thread && !arena_is_huge(ind)) {
+
+	if (have_background_thread) {
 		if (background_thread_create(tsdn_tsd(tsdn), ind)) {
 			malloc_printf("<jemalloc>: error in background thread "
 				      "creation for arena %u. Abort.\n", ind);
@@ -397,8 +394,12 @@ arena_bind(tsd_t *tsd, unsigned ind, bool internal) {
 		tsd_iarena_set(tsd, arena);
 	} else {
 		tsd_arena_set(tsd, arena);
-		unsigned shard = atomic_fetch_add_u(&arena->binshard_next, 1,
-		    ATOMIC_RELAXED);
+		/*
+		 * While shard acts as a random seed, the cast below should
+		 * not make much difference.
+		 */
+		uint8_t shard = (uint8_t)atomic_fetch_add_u(
+		    &arena->binshard_next, 1, ATOMIC_RELAXED);
 		tsd_binshards_t *bins = tsd_binshardsp_get(tsd);
 		for (unsigned i = 0; i < SC_NBINS; i++) {
 			assert(bin_infos[i].n_shards > 0 &&
@@ -886,10 +887,10 @@ malloc_slow_flag_init(void) {
 
 #if 0
 /* Number of sources for initializing malloc_conf */
-#define MALLOC_CONF_NSOURCES 2
+#define MALLOC_CONF_NSOURCES 5
 
 static const char *
-obtain_malloc_conf(unsigned which_source, char buf[PATH_MAX + 1]) {
+obtain_malloc_conf(unsigned which_source, char readlink_buf[PATH_MAX + 1]) {
 	if (config_debug) {
 		static unsigned read_source = 0;
 		/*
@@ -932,9 +933,9 @@ obtain_malloc_conf(unsigned which_source, char buf[PATH_MAX + 1]) {
 		 * link's name.
 		 */
 #ifndef JEMALLOC_READLINKAT
-		linklen = readlink(linkname, buf, PATH_MAX);
+		linklen = readlink(linkname, readlink_buf, PATH_MAX);
 #else
-		linklen = readlinkat(AT_FDCWD, linkname, buf, PATH_MAX);
+		linklen = readlinkat(AT_FDCWD, linkname, readlink_buf, PATH_MAX);
 #endif
 		if (linklen == -1) {
 			/* No configuration specified. */
@@ -943,8 +944,8 @@ obtain_malloc_conf(unsigned which_source, char buf[PATH_MAX + 1]) {
 			set_errno(saved_errno);
 		}
 #endif
-		buf[linklen] = '\0';
-		ret = buf;
+		readlink_buf[linklen] = '\0';
+		ret = readlink_buf;
 		break;
 	} case 3: {
 		const char *envname =
@@ -956,10 +957,7 @@ obtain_malloc_conf(unsigned which_source, char buf[PATH_MAX + 1]) {
 		    ;
 
 		if ((ret = jemalloc_getenv(envname)) != NULL) {
-			/*
-			 * Do nothing; opts is already initialized to the value
-			 * of the MALLOC_CONF environment variable.
-			 */
+			opt_malloc_conf_env_var = ret;
 		} else {
 			/* No configuration specified. */
 			ret = NULL;
@@ -975,18 +973,14 @@ obtain_malloc_conf(unsigned which_source, char buf[PATH_MAX + 1]) {
 	return ret;
 }
 
-static void
-validate_hpa_settings(void) {
-	if (!hpa_supported() || !opt_hpa || opt_hpa_opts.dirty_mult == (fxp_t)-1) {
-		return;
-	}
+static bool
+validate_hpa_ratios(void) {
 	size_t hpa_threshold = fxp_mul_frac(HUGEPAGE, opt_hpa_opts.dirty_mult) +
 	    opt_hpa_opts.hugification_threshold;
 	if (hpa_threshold > HUGEPAGE) {
-		return;
+		return false;
 	}
 
-	had_conf_error = true;
 	char hpa_dirty_mult[FXP_BUF_SIZE];
 	char hugification_threshold[FXP_BUF_SIZE];
 	char normalization_message[256] = {0};
@@ -1013,15 +1007,38 @@ validate_hpa_settings(void) {
 	    "hpa_hugification_threshold_ratio: %s and hpa_dirty_mult: %s. "
 	    "These values should sum to > 1.0.\n%s", hugification_threshold,
 	    hpa_dirty_mult, normalization_message);
+
+	return true;
+}
+
+static void
+validate_hpa_settings(void) {
+	if (!hpa_supported() || !opt_hpa) {
+		return;
+	}
+	if (HUGEPAGE > HUGEPAGE_MAX_EXPECTED_SIZE) {
+		had_conf_error = true;
+		malloc_printf(
+		    "<jemalloc>: huge page size (%zu) greater than expected."
+		    "May not be supported or behave as expected.", HUGEPAGE);
+	}
+	if (opt_hpa_opts.dirty_mult != (fxp_t)-1 && validate_hpa_ratios()) {
+		had_conf_error = true;
+	}
 }
 
 static void
 malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
     bool initial_call, const char *opts_cache[MALLOC_CONF_NSOURCES],
-    char buf[PATH_MAX + 1]) {
+    char readlink_buf[PATH_MAX + 1]) {
 	static const char *opts_explain[MALLOC_CONF_NSOURCES] = {
 		"string specified via --with-malloc-conf",
-		"string pointed to by the global variable malloc_conf"
+		"string pointed to by the global variable malloc_conf",
+		"\"name\" of the file referenced by the symbolic link named "
+		    "/etc/malloc.conf",
+		"value of the environment variable MALLOC_CONF",
+		"string pointed to by the global variable "
+		    "malloc_conf_2_conf_harder",
 	};
 	unsigned i;
 	const char *opts, *k, *v;
@@ -1030,7 +1047,7 @@ malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
 	for (i = 0; i < MALLOC_CONF_NSOURCES; i++) {
 		/* Get runtime configuration. */
 		if (initial_call) {
-			opts_cache[i] = obtain_malloc_conf(i, buf);
+			opts_cache[i] = obtain_malloc_conf(i, readlink_buf);
 		}
 		opts = opts_cache[i];
 		if (!initial_call && opt_confirm_conf) {
@@ -1169,6 +1186,7 @@ malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
 			CONF_HANDLE_BOOL(opt_abort, "abort")
 			CONF_HANDLE_BOOL(opt_abort_conf, "abort_conf")
 			CONF_HANDLE_BOOL(opt_cache_oblivious, "cache_oblivious")
+			CONF_HANDLE_BOOL(opt_trust_madvise, "trust_madvise")
 			if (strncmp("metadata_thp", k, klen) == 0) {
 				int m;
 				bool match = false;
@@ -1254,6 +1272,21 @@ malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
 				} while (vlen_left > 0);
 				CONF_CONTINUE;
 			}
+			CONF_HANDLE_SIZE_T(opt_bin_info_max_batched_size,
+			    "max_batched_size", 0, SIZE_T_MAX,
+			    CONF_DONT_CHECK_MIN, CONF_DONT_CHECK_MAX,
+			    /* clip */ true)
+			CONF_HANDLE_SIZE_T(opt_bin_info_remote_free_max_batch,
+			    "remote_free_max_batch", 0,
+			    BIN_REMOTE_FREE_ELEMS_MAX,
+			    CONF_DONT_CHECK_MIN, CONF_CHECK_MAX,
+			    /* clip */ true)
+			CONF_HANDLE_SIZE_T(opt_bin_info_remote_free_max,
+			    "remote_free_max", 0,
+			    BIN_REMOTE_FREE_ELEMS_MAX,
+			    CONF_DONT_CHECK_MIN, CONF_CHECK_MAX,
+			    /* clip */ true)
+
 			if (CONF_MATCH("tcache_ncached_max")) {
 				bool err = tcache_bin_info_default_init(
 				    v, vlen);
@@ -1328,6 +1361,8 @@ malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
 				    "experimental_infallible_new")
 			}
 
+			CONF_HANDLE_BOOL(opt_experimental_tcache_gc,
+			    "experimental_tcache_gc")
 			CONF_HANDLE_BOOL(opt_tcache, "tcache")
 			CONF_HANDLE_SIZE_T(opt_tcache_max, "tcache_max",
 			    0, TCACHE_MAXCLASS_LIMIT, CONF_DONT_CHECK_MIN,
@@ -1381,6 +1416,9 @@ malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
 			    "debug_double_free_max_scan", 0, UINT_MAX,
 			    CONF_DONT_CHECK_MIN, CONF_DONT_CHECK_MAX,
 			    /* clip */ false)
+			CONF_HANDLE_SIZE_T(opt_calloc_madvise_threshold,
+			    "calloc_madvise_threshold", 0, SC_LARGE_MAXCLASS,
+			    CONF_DONT_CHECK_MIN, CONF_CHECK_MAX, /* clip */ false)
 
 			/*
 			 * The runtime option of oversize_threshold remains
@@ -1464,6 +1502,14 @@ malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
 			    opt_hpa_opts.min_purge_interval_ms,
 			    "hpa_min_purge_interval_ms", 0, 0,
 			    CONF_DONT_CHECK_MIN, CONF_DONT_CHECK_MAX, false);
+
+			CONF_HANDLE_BOOL(
+			    opt_hpa_opts.experimental_strict_min_purge_interval,
+			    "experimental_hpa_strict_min_purge_interval");
+
+			CONF_HANDLE_SSIZE_T(
+			    opt_hpa_opts.experimental_max_purge_nhp,
+			    "experimental_hpa_max_purge_nhp", -1, SSIZE_MAX);
 
 			if (CONF_MATCH("hpa_dirty_mult")) {
 				if (CONF_MATCH_VALUE("-1")) {
@@ -1551,6 +1597,7 @@ malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
 				CONF_HANDLE_BOOL(opt_prof_leak_error,
 				    "prof_leak_error")
 				CONF_HANDLE_BOOL(opt_prof_log, "prof_log")
+				CONF_HANDLE_BOOL(opt_prof_pid_namespace, "prof_pid_namespace")
 				CONF_HANDLE_SSIZE_T(opt_prof_recent_alloc_max,
 				    "prof_recent_alloc_max", -1, SSIZE_MAX)
 				CONF_HANDLE_BOOL(opt_prof_stats, "prof_stats")
@@ -1695,15 +1742,37 @@ malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
 	atomic_store_b(&log_init_done, true, ATOMIC_RELEASE);
 }
 
+static bool
+malloc_conf_init_check_deps(void) {
+	if (opt_prof_leak_error && !opt_prof_final) {
+		malloc_printf("<jemalloc>: prof_leak_error is set w/o "
+		    "prof_final.\n");
+		return true;
+	}
+	/* To emphasize in the stats output that opt is disabled when !debug. */
+	if (!config_debug) {
+		opt_debug_double_free_max_scan = 0;
+	}
+
+	return false;
+}
+
 static void
-malloc_conf_init(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS]) {
-	const char *opts_cache[MALLOC_CONF_NSOURCES] = {NULL, NULL};
-	char buf[PATH_MAX + 1];
+malloc_conf_init(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
+    char readlink_buf[PATH_MAX + 1]) {
+	const char *opts_cache[MALLOC_CONF_NSOURCES] = {NULL, NULL, NULL, NULL,
+		NULL};
 
 	/* The first call only set the confirm_conf option and opts_cache */
-	malloc_conf_init_helper(NULL, NULL, true, opts_cache, buf);
+	malloc_conf_init_helper(NULL, NULL, true, opts_cache, readlink_buf);
 	malloc_conf_init_helper(sc_data, bin_shard_sizes, false, opts_cache,
 	    NULL);
+	if (malloc_conf_init_check_deps()) {
+		/* check_deps does warning msg only; abort below if needed. */
+		if (opt_abort_conf) {
+			malloc_abort_invalid_conf();
+		}
+	}
 }
 #endif
 #undef MALLOC_CONF_NSOURCES
@@ -1761,7 +1830,11 @@ malloc_init_hard_a0_locked(void) {
 	if (config_prof) {
 		prof_boot0();
 	}
-	// malloc_conf_init(&sc_data, bin_shard_sizes);
+/*
+	char readlink_buf[PATH_MAX + 1];
+	readlink_buf[0] = '\0';
+	malloc_conf_init(&sc_data, bin_shard_sizes, readlink_buf);
+*/
 	san_init(opt_lg_san_uaf_align);
 	sz_boot(&sc_data, opt_cache_oblivious);
 	bin_info_boot(&sc_data, bin_shard_sizes);
@@ -1850,6 +1923,17 @@ malloc_init_hard_a0_locked(void) {
 	}
 
 	malloc_init_state = malloc_init_a0_initialized;
+
+/*
+	size_t buf_len = strlen(readlink_buf);
+	if (buf_len > 0) {
+		void *readlink_allocated = a0ialloc(buf_len + 1, false, true);
+		if (readlink_allocated != NULL) {
+			memcpy(readlink_allocated, readlink_buf, buf_len + 1);
+			opt_malloc_conf_symlink = readlink_allocated;
+		}
+	}
+*/
 
 	return false;
 }
@@ -2635,8 +2719,6 @@ malloc_default(size_t size) {
 		hook_invoke_alloc(hook_alloc_malloc, ret, (uintptr_t)ret, args);
 	}
 
-	LOG("core.malloc.exit", "result: %p", ret);
-
 	return ret;
 }
 
@@ -2649,7 +2731,12 @@ JEMALLOC_EXPORT JEMALLOC_ALLOCATOR JEMALLOC_RESTRICT_RETURN
 void JEMALLOC_NOTHROW *
 JEMALLOC_ATTR(malloc) JEMALLOC_ALLOC_SIZE(1)
 je_malloc(size_t size) {
-	return imalloc_fastpath(size, &malloc_default);
+	LOG("core.malloc.entry", "size: %zu", size);
+
+	void * ret = imalloc_fastpath(size, &malloc_default);
+
+	LOG("core.malloc.exit", "result: %p", ret);
+	return ret;
 }
 
 JEMALLOC_EXPORT int JEMALLOC_NOTHROW
@@ -2740,7 +2827,7 @@ je_calloc(size_t num, size_t size) {
 	static_opts_t sopts;
 	dynamic_opts_t dopts;
 
-	LOG("core.calloc.entry", "num: %zu, size: %zu\n", num, size);
+	LOG("core.calloc.entry", "num: %zu, size: %zu", num, size);
 
 	static_opts_init(&sopts);
 	dynamic_opts_init(&dopts);
@@ -2919,7 +3006,11 @@ je_free(void *ptr) {
 
 JEMALLOC_EXPORT void JEMALLOC_NOTHROW
 je_free_sized(void *ptr, size_t size) {
-	return je_sdallocx_noflags(ptr, size);
+	LOG("core.free_sized.entry", "ptr: %p, size: %zu", ptr, size);
+
+	je_sdallocx_noflags(ptr, size);
+
+	LOG("core.free_sized.exit", "");
 }
 
 JEMALLOC_EXPORT void JEMALLOC_NOTHROW
@@ -2950,6 +3041,7 @@ je_memalign(size_t alignment, size_t size) {
 	static_opts_init(&sopts);
 	dynamic_opts_init(&dopts);
 
+	sopts.bump_empty_aligned_alloc = true;
 	sopts.min_alignment = 1;
 	sopts.oom_string =
 	    "<jemalloc>: Error allocating aligned memory: out of memory\n";
@@ -3379,7 +3471,9 @@ do_rallocx(void *ptr, size_t size, int flags, bool is_realloc) {
 
 	return p;
 label_oom:
-	set_errno(ENOMEM);
+	if (is_realloc) {
+		set_errno(ENOMEM);
+	}
 	if (config_xmalloc && unlikely(opt_xmalloc)) {
 		malloc_write("<jemalloc>: Error in rallocx(): out of memory\n");
 		abort();
