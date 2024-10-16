@@ -118,6 +118,11 @@
 #undef JEMALLOC_HAVE_CLOCK_REALTIME
 
 /*
+ * Defined if clock_gettime_nsec_np(CLOCK_UPTIME_RAW) is available.
+ */
+#undef JEMALLOC_HAVE_CLOCK_GETTIME_NSEC_NP
+
+/*
  * Defined if _malloc_thread_cleanup() exists.  At least in the case of
  * FreeBSD, pthread_key_create() allocates, which if used during malloc
  * bootstrapping will cause recursion into the pthreads library.  Therefore, if
@@ -166,6 +171,9 @@
 
 /* Use gcc intrinsics for profile backtracing if defined. */
 #undef JEMALLOC_PROF_GCC
+
+/* Use frame pointer for profile backtracing if defined. Linux only. */
+#undef JEMALLOC_PROF_FRAME_POINTER
 
 /* JEMALLOC_PAGEID enabled page id */
 #undef JEMALLOC_PAGEID
